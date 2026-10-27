@@ -1,0 +1,43 @@
+{
+  "name": "mmbiz-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for managing WeChat Official Account (微信公众号) drafts, materials and publishing",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mmbiz-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "wechat",
+    "weixin",
+    "mmbiz",
+    "公众号"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "marked": "^18.1.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
