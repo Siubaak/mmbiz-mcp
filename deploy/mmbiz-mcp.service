@@ -1,0 +1,20 @@
+[Unit]
+Description=mmbiz-mcp (WeChat Official Account MCP server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mmbiz-mcp
+EnvironmentFile=/opt/mmbiz-mcp/.env
+Environment=NODE_ENV=production MCP_TRANSPORT=http MCP_HTTP_HOST=127.0.0.1 MCP_HTTP_PORT=3000
+ExecStart=/usr/bin/node /opt/mmbiz-mcp/dist/index.js
+Restart=on-failure
+User=mmbiz
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
