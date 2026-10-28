@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { UploadFile } from "./client.js";
@@ -42,6 +42,10 @@ export interface LoadMediaOptions {
   fetch?: typeof fetch;
   /** Base directory for relative local paths. Defaults to the process cwd. */
   baseDir?: string;
+  /** Set to false to reject local paths and file:// urls (e.g. for remote HTTP clients). */
+  allowLocalFiles?: boolean;
+  /** Reject local files outside baseDir, including via symlinks. */
+  restrictToBaseDir?: boolean;
 }
 
 /**
@@ -52,9 +56,13 @@ export async function loadMedia(source: string, options: LoadMediaOptions = {}):
   if (/^data:/i.test(trimmed)) return fromDataUri(trimmed);
   if (/^https?:\/\//i.test(trimmed)) return fromUrl(trimmed, options.fetch ?? fetch);
 
-  const filePath = /^file:\/\//i.test(trimmed)
-    ? fileURLToPath(trimmed)
-    : path.resolve(options.baseDir ?? process.cwd(), trimmed);
+  if (options.allowLocalFiles === false) {
+    throw new Error(`当前服务不允许读取本地文件（${trimmed}），请改用 http(s) 链接或 data:image/...;base64 URI`);
+  }
+  const baseDir = path.resolve(options.baseDir ?? process.cwd());
+  const filePath = /^file:\/\//i.test(trimmed) ? fileURLToPath(trimmed) : path.resolve(baseDir, trimmed);
+  if (options.restrictToBaseDir) await assertInside(baseDir, filePath, trimmed);
+
   let data: Buffer;
   try {
     data = await readFile(filePath);
@@ -62,6 +70,24 @@ export async function loadMedia(source: string, options: LoadMediaOptions = {}):
     throw new Error(`无法读取本地文件 ${filePath}: ${(error as Error).message}`);
   }
   return finalize(data, path.basename(filePath));
+}
+
+function isInside(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function assertInside(root: string, filePath: string, source: string): Promise<void> {
+  const denied = () => new Error(`本地文件 ${source} 超出允许的目录 ${root}`);
+  if (!isInside(root, filePath)) throw denied();
+  let realFile: string;
+  try {
+    realFile = await realpath(filePath);
+  } catch {
+    // Missing files fall through to the regular read error.
+    return;
+  }
+  if (!isInside(await realpath(root), realFile)) throw denied();
 }
 
 function fromDataUri(uri: string): UploadFile {

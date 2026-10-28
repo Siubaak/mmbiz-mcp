@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -71,6 +71,33 @@ describe("loadMedia", () => {
 
   it("reports missing local files", async () => {
     await expect(loadMedia(path.join(dir, "missing.png"))).rejects.toThrow(/missing\.png/);
+  });
+});
+
+describe("loadMedia local file restrictions", () => {
+  it("can disable local file access entirely", async () => {
+    const options = { allowLocalFiles: false };
+    await expect(loadMedia(path.join(dir, "cover.png"), options)).rejects.toThrow(/不允许读取本地文件/);
+    await expect(loadMedia(`file://${path.join(dir, "cover.png")}`, options)).rejects.toThrow(/不允许读取本地文件/);
+    await expect(
+      loadMedia(`data:image/png;base64,${PNG_1X1.toString("base64")}`, options),
+    ).resolves.toMatchObject({ contentType: "image/png" });
+  });
+
+  it("can confine local files to baseDir", async () => {
+    const options = { baseDir: dir, restrictToBaseDir: true };
+    await expect(loadMedia("cover.png", options)).resolves.toMatchObject({ filename: "cover.png" });
+    await expect(loadMedia(path.join(dir, "cover.png"), options)).resolves.toMatchObject({ filename: "cover.png" });
+    await expect(loadMedia("../etc/passwd", options)).rejects.toThrow(/超出允许的目录/);
+    await expect(loadMedia("/etc/hosts", options)).rejects.toThrow(/超出允许的目录/);
+    await expect(loadMedia(`${dir}-evil/cover.png`, options)).rejects.toThrow(/超出允许的目录/);
+  });
+
+  it("does not follow symlinks out of baseDir", async () => {
+    const outside = await mkdtemp(path.join(tmpdir(), "mmbiz-mcp-outside-"));
+    await writeFile(path.join(outside, "secret.png"), PNG_1X1);
+    await symlink(path.join(outside, "secret.png"), path.join(dir, "link.png"));
+    await expect(loadMedia("link.png", { baseDir: dir, restrictToBaseDir: true })).rejects.toThrow(/超出允许的目录/);
   });
 });
 
