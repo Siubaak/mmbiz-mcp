@@ -40,6 +40,13 @@ npm install
 npm run build
 ```
 
+支持两种接入方式：
+
+- **stdio（本地）**：MCP 客户端在本机启动进程，可以直接使用本机图片路径。
+- **HTTP（远程）**：部署在服务器上，客户端通过 URL + 令牌接入，见下文 [HTTP 接入与服务器部署](#http-接入与服务器部署)。
+
+### stdio 本地接入
+
 在 MCP 客户端中配置（以 Cursor 的 `~/.cursor/mcp.json` 或 Claude Desktop 的 `claude_desktop_config.json` 为例）：
 
 ```json
@@ -62,6 +69,74 @@ npm run build
 | `WECHAT_APP_ID` | 是 | 公众号 AppID |
 | `WECHAT_APP_SECRET` | 是 | 公众号 AppSecret |
 | `WECHAT_API_BASE_URL` | 否 | 默认 `https://api.weixin.qq.com`。若本机 IP 不固定，可指向一台已加入白名单的反向代理 |
+
+## HTTP 接入与服务器部署
+
+HTTP 模式使用 MCP 的 Streamable HTTP 传输（无状态，`POST /mcp`），客户端必须携带 `Authorization: Bearer <MCP_AUTH_TOKEN>`。用 `--http` 参数或 `MCP_TRANSPORT=http` 开启。
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `MCP_TRANSPORT` | `stdio` | 设为 `http` 开启 HTTP 模式（等同于 `--http` 参数） |
+| `MCP_AUTH_TOKEN` | 无，必填 | 访问令牌，至少 16 个字符，建议 `openssl rand -hex 32` 生成 |
+| `MCP_HTTP_HOST` | `127.0.0.1` | 监听地址；Docker 镜像中为 `0.0.0.0` |
+| `MCP_HTTP_PORT` | `3000` | 监听端口 |
+| `MCP_HTTP_PATH` | `/mcp` | MCP 接口路径 |
+| `MCP_HTTP_MAX_BODY_MB` | `20` | 请求体上限（MB），用 base64 传图时需要足够大 |
+| `MCP_MEDIA_DIR` | 无 | 允许读取的服务器本地图片目录 |
+
+另有一个不需要鉴权的健康检查接口：`GET /healthz`。
+
+> **关于图片来源**：HTTP 模式下工具运行在服务器上，读不到你电脑上的文件。默认**禁止读取服务器本地文件**，图片请用 `http(s)` 链接或 `data:image/...;base64` 传入。设置了 `MCP_MEDIA_DIR` 时，只允许读取该目录内的文件（相对路径基于该目录，符号链接也不能逃出该目录）。
+
+### 方式 A：Docker
+
+```bash
+git clone https://github.com/Siubaak/mmbiz-mcp.git && cd mmbiz-mcp
+cp .env.example .env    # 填入 WECHAT_APP_ID / WECHAT_APP_SECRET / MCP_AUTH_TOKEN
+docker compose up -d --build
+curl http://127.0.0.1:3000/healthz   # {"status":"ok"}
+```
+
+### 方式 B：systemd
+
+```bash
+sudo useradd --system --home /opt/mmbiz-mcp mmbiz
+sudo git clone https://github.com/Siubaak/mmbiz-mcp.git /opt/mmbiz-mcp
+cd /opt/mmbiz-mcp
+sudo npm ci && sudo npm run build
+sudo cp .env.example .env && sudo chmod 600 .env && sudo chown mmbiz .env   # 编辑 .env 填写配置
+sudo cp deploy/mmbiz-mcp.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now mmbiz-mcp
+journalctl -u mmbiz-mcp -f   # 看到 listening on http://127.0.0.1:3000/mcp 即启动成功
+```
+
+### 配置 HTTPS
+
+服务默认只监听 `127.0.0.1`，请在前面用 nginx 或 Caddy 加上 HTTPS 再对外开放，否则令牌会以明文传输。nginx 示例见 [`deploy/nginx.conf`](deploy/nginx.conf)（注意 `client_max_body_size` 要不小于 `MCP_HTTP_MAX_BODY_MB`）。
+
+最后别忘了把**服务器出口 IP**（`curl -s https://ifconfig.me`）加入公众号 IP 白名单。
+
+### 客户端接入
+
+Cursor（`~/.cursor/mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "wechat-mp": {
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
+    }
+  }
+}
+```
+
+Claude Code：
+
+```bash
+claude mcp add --transport http wechat-mp https://mcp.example.com/mcp \
+  --header "Authorization: Bearer <MCP_AUTH_TOKEN>"
+```
 
 ## 使用示例
 
@@ -89,7 +164,7 @@ agent 会调用 `wechat_create_draft`：
 
 ## 开发
 
-项目按 TDD 开发，所有微信接口在测试中以假的 `fetch` 模拟，MCP 工具通过 SDK 的内存传输端到端测试，另有一个通过 stdio 启动真实子进程的集成测试。
+项目按 TDD 开发，所有微信接口在测试中以假的 `fetch` 模拟，MCP 工具通过 SDK 的内存传输端到端测试；HTTP 模式用真实 HTTP 服务 + SDK 的 Streamable HTTP 客户端测试；另有启动真实子进程（stdio 与 HTTP 两种模式）的入口集成测试。
 
 ```bash
 npm test          # 运行测试
@@ -110,7 +185,9 @@ src/
   media.ts    图片加载（路径 / URL / data URI）与格式大小校验
   content.ts  Markdown 转 HTML、正文图片转存
   server.ts   MCP 工具定义
-  index.ts    stdio 入口
+  http.ts     Streamable HTTP 服务（鉴权、健康检查、请求体限制）
+  index.ts    入口，按配置选择 stdio 或 HTTP
+deploy/       systemd 与 nginx 配置示例
 test/         与 src 一一对应的测试
 ```
 
